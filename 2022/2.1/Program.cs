@@ -2,11 +2,11 @@
     System.IO.File
         .ReadAllLines("input.txt")
         .Select(line => (Opponent: line.Split(" ")[0], Me: line.Split(" ")[1]))
-        .Select(game => (game.Opponent, game.Me) switch
+        .Select(game => game.Me switch
         {
-            (_, "X") => 1,
-            (_, "Y") => 2,
-            (_, "Z") => 3
+            "X" => 1,
+            "Y" => 2,
+            "Z" => 3
         } + (game.Opponent, game.Me) switch
         {
             ("A", "X") or ("B", "Y") or ("C", "Z") => 3,
