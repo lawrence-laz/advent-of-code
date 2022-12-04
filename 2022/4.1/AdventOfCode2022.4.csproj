@@ -9,7 +9,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Poem" Version="1.9.0" />
+    <PackageReference Include="Poem" Version="2.0.0-alpha" />
   </ItemGroup>
 
 </Project>
