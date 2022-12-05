@@ -9,6 +9,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="MoreLinq" Version="3.3.2" />
     <PackageReference Include="Poem" Version="2.0.0-alpha" />
   </ItemGroup>
 
