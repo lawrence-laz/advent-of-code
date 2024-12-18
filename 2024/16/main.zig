@@ -112,7 +112,7 @@ fn getDir(from: Vec2, to: Vec2) Dir {
         unreachable;
 }
 
-fn getTurnPrice(from: Dir, to: Dir) usize {
+fn getTurnCost(from: Dir, to: Dir) usize {
     if (from == .east and to == .east) return 0;
     if (from == .east and to == .north) return 1000;
     if (from == .east and to == .west) return 2000;
@@ -138,148 +138,123 @@ const NavNode = struct {
     dir: Dir,
 };
 
-const Result = struct {
+const Path = struct {
     cost: usize,
-    tiles: usize,
+    positions: []Vec2,
 };
 
-fn solvePart1(allocator: std.mem.Allocator, input: []const u8) !Result {
-    const input_single_line = try allocator.alloc(u8, std.mem.replacementSize(u8, input, "\n", ""));
-    defer allocator.free(input_single_line);
+const Result = struct {
+    cheapest_path_cost: usize,
+    cheapest_path_tiles: usize,
+};
+
+const Edge = struct {
+    from: Vec2,
+    to: Vec2,
+};
+
+fn findEnd(
+    allocator: std.mem.Allocator,
+    grid: Grid,
+    pos: Vec2,
+    dir: Dir,
+    came_from: *std.AutoArrayHashMapUnmanaged(Vec2, void),
+    total_cost: usize,
+    paths: *std.ArrayListUnmanaged(Path),
+    visited: *std.AutoHashMapUnmanaged(Edge, usize),
+) !void {
+    // std.debug.print("{any}\n", .{pos});
+    try came_from.put(allocator, pos, {});
+    const char = grid.get(pos) orelse return;
+    if (char == 'E') {
+        try paths.append(allocator, .{
+            .cost = total_cost,
+            .positions = try allocator.dupe(Vec2, came_from.keys()),
+        });
+    }
+    var neighbours = grid.neighbours(pos);
+    while (neighbours.next()) |next_pos| {
+        const new_dir = getDir(pos, next_pos);
+        const new_cost = getTurnCost(dir, new_dir) + 1;
+        if (visited.get(.{ .from = pos, .to = next_pos })) |prev_cost| {
+            if (prev_cost < new_cost) continue;
+        }
+        if (came_from.contains(next_pos)) continue;
+        const next_char = grid.get(next_pos) orelse continue;
+        if (next_char == '#') continue;
+        try visited.put(allocator, .{ .from = pos, .to = next_pos }, new_cost);
+        try findEnd(
+            allocator,
+            grid,
+            next_pos,
+            new_dir,
+            came_from,
+            total_cost + new_cost,
+            paths,
+            visited,
+        );
+    }
+    _ = came_from.pop();
+}
+
+fn solve(allocator: std.mem.Allocator, input: []const u8) !Result {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const input_single_line = try arena.allocator().alloc(u8, std.mem.replacementSize(u8, input, "\n", ""));
+    defer arena.allocator().free(input_single_line);
     const height = std.mem.replace(u8, input, "\n", "", input_single_line);
     const width = input_single_line.len / height;
     var grid: Grid = .{ .slice = input_single_line, .width = width, .height = height };
     const start_pos: Vec2 = grid.indexToPos(std.mem.indexOf(u8, grid.slice, "S").?);
-    const end_pos: Vec2 = grid.indexToPos(std.mem.indexOf(u8, grid.slice, "E").?);
 
-    var nav: std.AutoArrayHashMapUnmanaged(Vec2, std.ArrayListUnmanaged(NavNode)) = .{};
-    defer nav.deinit(allocator);
-    defer for (nav.values()) |*nodes| nodes.deinit(allocator);
-    // const start_nav: NavNode = .{ .cost_so_far = 0, .prev_pos = null, .dir = .east };
-    const start_nav = try nav.getOrPutValue(allocator, start_pos, .{});
-    try start_nav.value_ptr.append(allocator, .{ .cost_so_far = 0, .prev_pos = null, .dir = .east });
+    var came_from: std.AutoArrayHashMapUnmanaged(Vec2, void) = .{};
+    var paths: std.ArrayListUnmanaged(Path) = .{};
+    var visited: std.AutoHashMapUnmanaged(Edge, usize) = .{};
+    try findEnd(arena.allocator(), grid, start_pos, .east, &came_from, 0, &paths, &visited);
 
-    var to_walk: std.ArrayListUnmanaged(Vec2) = .{};
-    defer to_walk.deinit(allocator);
-
-    var start_neigbours = grid.neighbours(start_pos);
-    while (start_neigbours.next()) |next_pos| {
-        const next = grid.get(next_pos) orelse continue;
-        if (next == '#') continue;
-        try to_walk.append(allocator, next_pos);
-        const dir = getDir(start_pos, next_pos);
-        const next_nav: NavNode = .{
-            .dir = dir,
-            .cost_so_far = getTurnPrice(.east, dir) + 1,
-            .prev_pos = start_pos,
-        };
-        var nav_nodes = try nav.getOrPutValue(allocator, next_pos, .{});
-        if (nav_nodes.found_existing and
-            nav_nodes.value_ptr.items.len > 0 and
-            nav_nodes.value_ptr.items[0].cost_so_far > next_nav.cost_so_far)
-        {
-            nav_nodes.value_ptr.clearRetainingCapacity();
-        }
-        try nav_nodes.value_ptr.append(allocator, next_nav);
+    var cheapest_path_cost: usize = std.math.maxInt(usize);
+    for (paths.items) |path| {
+        if (cheapest_path_cost > path.cost) cheapest_path_cost = path.cost;
     }
 
-    // var visited: std.ArrayListUnmanaged(Vec2) = .{};
-    // try visited.append(allocator, start);
-
-    while (to_walk.popOrNull()) |curr_pos| {
-        const curr_nav = nav.get(curr_pos).?.items[0];
-        var neighbours = grid.neighbours(curr_pos);
-        while (neighbours.next()) |next_pos| {
-            const next = grid.get(next_pos) orelse continue;
-            if (next == '#') continue;
-            const next_dir = getDir(curr_pos, next_pos);
-            const next_price = getTurnPrice(curr_nav.dir, next_dir) + 1;
-            const next_nav: NavNode = .{ .prev_pos = curr_pos, .dir = next_dir, .cost_so_far = curr_nav.cost_so_far + next_price };
-            if (next_pos.x == 15 and next_pos.y == 7)
-                std.log.debug("came to target from {any} with price {any}", .{ curr_pos, next_nav.cost_so_far });
-            var nav_nodes = try nav.getOrPutValue(allocator, next_pos, .{});
-            if (nav_nodes.found_existing and nav_nodes.value_ptr.items.len > 0) {
-                if (next_pos.x == 15 and next_pos.y == 7)
-                    std.log.debug("but best is {any}", .{nav_nodes.value_ptr.items[0].cost_so_far});
-                if (nav_nodes.value_ptr.items[0].cost_so_far > next_nav.cost_so_far) {
-                    nav_nodes.value_ptr.clearRetainingCapacity();
-                    try nav_nodes.value_ptr.append(allocator, next_nav);
-                } else if (nav_nodes.value_ptr.items[0].cost_so_far >= next_nav.cost_so_far - 1000) {
-                    try nav_nodes.value_ptr.append(allocator, next_nav);
-                }
-                if (nav_nodes.value_ptr.items[0].cost_so_far >= next_nav.cost_so_far) {
-                    if (next != 'E') {
-                        try to_walk.append(allocator, next_pos);
-                    }
-                }
-            } else {
-                try nav_nodes.value_ptr.append(allocator, next_nav);
-                if (next != 'E') {
-                    try to_walk.append(allocator, next_pos);
-                }
+    var cheapest_path_tiles: std.AutoHashMapUnmanaged(Vec2, void) = .{};
+    for (paths.items) |path| {
+        if (path.cost == cheapest_path_cost) {
+            for (path.positions) |pos| {
+                try cheapest_path_tiles.put(arena.allocator(), pos, {});
             }
         }
-        // try visited.append(allocator, curr_pos);
-        // try to_walk.append()
     }
 
-    // var node = nav.get(end_pos).?;
+    return .{ .cheapest_path_cost = cheapest_path_cost, .cheapest_path_tiles = cheapest_path_tiles.count() };
+
     // while (node.prev_pos) |prev_pos| {
-    //     node = nav.get(prev_pos).?;
-    //     const char: u8 = switch (node.dir) {
-    //         .east => '>',
-    //         .north => '^',
-    //         .west => '<',
-    //         .south => 'v',
-    //     };
-    //     grid.set(prev_pos, char);
+    // for (tiles.keys()) |pos| {
+    //     grid.set(pos, 'O');
     // }
-
-    var tiles: std.AutoArrayHashMapUnmanaged(Vec2, void) = .{};
-    defer tiles.deinit(allocator);
-    var to_visit: std.ArrayListUnmanaged(Vec2) = .{};
-    defer to_visit.deinit(allocator);
-    try to_visit.append(allocator, end_pos);
-    while (to_visit.popOrNull()) |pos| {
-        try tiles.put(allocator, pos, {});
-        const pos_nav = nav.get(pos).?;
-        if (pos.x == 15 and pos.y == 7) std.debug.print("\n!!! {any} !!!\n", .{pos_nav.items.len});
-        for (pos_nav.items) |next_nav| {
-            if (next_nav.prev_pos) |next_pos| {
-                try to_visit.append(allocator, next_pos);
-            }
-        }
-    }
-
-    // while (node.prev_pos) |prev_pos| {
-    for (tiles.keys()) |pos| {
-        grid.set(pos, 'O');
-    }
-    grid.print();
-
-    return .{ .cost = nav.get(end_pos).?.items[0].cost_so_far, .tiles = tiles.count() };
+    // grid.print();
 }
 
 test "example input part1" {
     const input = @embedFile("./example-input.txt");
-    const result = try solvePart1(std.testing.allocator, input);
-    try std.testing.expectEqual(11048, result.cost);
+    const result = try solve(std.testing.allocator, input);
+    try std.testing.expectEqual(11048, result.cheapest_path_cost);
 }
 
 test "real input part1" {
     const input = @embedFile("./real-input.txt");
-    const result = try solvePart1(std.testing.allocator, input);
-    try std.testing.expectEqual(99460, result.cost);
+    const result = try solve(std.testing.allocator, input);
+    try std.testing.expectEqual(99460, result.cheapest_path_cost);
 }
 
 test "example input part2" {
     const input = @embedFile("./example-input.txt");
-    const result = try solvePart1(std.testing.allocator, input);
-    try std.testing.expectEqual(64, result.tiles);
+    const result = try solve(std.testing.allocator, input);
+    try std.testing.expectEqual(64, result.cheapest_path_tiles);
 }
 
 test "real input part2" {
     const input = @embedFile("./real-input.txt");
-    const result = try solvePart1(std.testing.allocator, input);
-    try std.testing.expectEqual(123, result.tiles);
+    const result = try solve(std.testing.allocator, input);
+    try std.testing.expectEqual(123, result.cheapest_path_tiles);
 }
